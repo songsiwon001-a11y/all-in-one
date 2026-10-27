@@ -17,7 +17,6 @@ jobs:
           distribution: temurin
           java-version: 17
 
-      # 러너에 미리 설치된 Android SDK를 사용 (setup-android 액션은 쓰지 않음)
       - name: Prepare Android SDK
         run: |
           export ANDROID_HOME="${ANDROID_HOME:-/usr/local/lib/android/sdk}"
@@ -27,17 +26,19 @@ jobs:
           echo "ANDROID_HOME=$ANDROID_HOME" >> "$GITHUB_ENV"
           echo "sdk.dir=$ANDROID_HOME" > local.properties
 
-      # gradle wrapper 파일 없이도 빌드되도록 Gradle을 직접 설치
       - uses: gradle/actions/setup-gradle@v4
         with:
           gradle-version: 8.7
 
       - name: Build debug APK
-        run: gradle assembleDebug --no-daemon --console=plain 2>&1 | tee build.log; test ${PIPESTATUS[0]} -eq 0
+        shell: bash
+        run: |
+          gradle assembleDebug --no-daemon --console=plain 2>&1 | tee build.log
 
       - name: Show compile errors
         if: failure()
-        run: grep -nE "^e: |What went wrong|error:|Execution failed" -A3 build.log | head -60 || true
+        run: |
+          grep -nE '^e: |What went wrong|Execution failed' -A3 build.log | head -60 || true
 
       - uses: actions/upload-artifact@v4
         with:
