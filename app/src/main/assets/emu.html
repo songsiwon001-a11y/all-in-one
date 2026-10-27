@@ -20,6 +20,8 @@
   window.EJS_gameUrl = q.get('game');
   window.EJS_gameName = q.get('name') || 'game';
   window.EJS_pathtodata = CDN;
+  // DOS(dosbox_pure) 등 일부 코어는 스레드(SharedArrayBuffer)가 필요하다.
+  window.EJS_threads = q.get('threads') === '1';
   window.EJS_startOnLoaded = true;
   window.EJS_color = '#2d6cdf';
   window.EJS_language = 'ko-KR';
