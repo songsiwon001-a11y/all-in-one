@@ -39,9 +39,13 @@ class EmulatorActivity : Activity() {
         if (core == "dosbox_pure" && gameExt != "zip") {
             // exe/com/bat는 같은 폴더를 zip으로 묶어서 전달 (DOSBox Pure는 zip 안의 실행 파일을 찾는다)
             try {
-                tmpZip = File(cacheDir, "dos_run.zip").also { buildDosZip(target, it) }
+                val up = intent.getIntExtra("up", 0)
+                val skipped = File(cacheDir, "dos_run.zip").also { tmpZip = it }
+                    .let { buildDosZip(target, it, up) }
                 gameFile = tmpZip!!
                 gameExt = "zip"
+                if (skipped > 0) Toast.makeText(
+                    this, "용량 제한으로 파일 ${skipped}개를 제외했습니다", Toast.LENGTH_LONG).show()
             } catch (e: Exception) {
                 Toast.makeText(this, "준비 실패: ${e.message}", Toast.LENGTH_LONG).show()
                 finish(); return
@@ -79,20 +83,50 @@ class EmulatorActivity : Activity() {
         web.loadUrl("https://allinone.local/emu.html?core=$core&game=/game.$gameExt&name=$name")
     }
 
-    private fun buildDosZip(target: File, out: File) {
-        val dir = target.parentFile ?: throw IllegalStateException("폴더 없음")
-        val limit = 64L * 1024 * 1024
+    /**
+     * 게임 폴더 전체(하위 폴더 포함)를 zip으로 묶고, DOSBox Pure가 바로 실행하도록
+     * 루트에 DOSBOX.CONF(autoexec)를 넣는다. up > 0 이면 exe가 있는 폴더의 상위 폴더를 루트로 삼는다.
+     * @return 용량 제한으로 제외된 파일 수
+     */
+    private fun buildDosZip(target: File, out: File, up: Int): Int {
+        var root = target.parentFile ?: throw IllegalStateException("폴더 없음")
+        repeat(up) { root = root.parentFile ?: root }
+        val limit = 400L * 1024 * 1024
         var total = 0L
+        var skipped = 0
+
+        val rootPath = root.toPath()
+        fun rel(f: File) = rootPath.relativize(f.toPath()).toString().replace(File.separatorChar, '/')
+
+        val files = root.walkTopDown().filter { it.isFile }.toList()
+            .sortedBy { if (it == target) 0 else 1 }   // 실행 파일 우선 포함
+        val hasConf = files.any { rel(it).equals("dosbox.conf", ignoreCase = true) }
+
         ZipOutputStream(FileOutputStream(out)).use { zip ->
-            val files = listOf(target) + (dir.listFiles()?.filter { it.isFile && it != target } ?: emptyList())
+            zip.setLevel(java.util.zip.Deflater.NO_COMPRESSION)  // 빠르게 묶기
+
+            if (!hasConf) {
+                val relDir = rel(target).substringBeforeLast('/', "").replace('/', '\\')
+                val runCmd = if (target.extension.equals("bat", true)) "call ${target.name}" else target.name
+                val conf = buildString {
+                    append("[autoexec]\r\n@echo off\r\nc:\r\n")
+                    if (relDir.isNotEmpty()) append("cd \\$relDir\r\n")
+                    append(runCmd).append("\r\n")
+                }
+                zip.putNextEntry(ZipEntry("DOSBOX.CONF"))
+                zip.write(conf.toByteArray())
+                zip.closeEntry()
+            }
+
             for (f in files) {
-                if (total + f.length() > limit) continue
-                zip.putNextEntry(ZipEntry(f.name))
+                if (total + f.length() > limit) { skipped++; continue }
+                zip.putNextEntry(ZipEntry(rel(f)))
                 f.inputStream().use { it.copyTo(zip) }
                 zip.closeEntry()
                 total += f.length()
             }
         }
+        return skipped
     }
 
     override fun onDestroy() {
