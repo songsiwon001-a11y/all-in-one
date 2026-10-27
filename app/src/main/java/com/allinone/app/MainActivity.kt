@@ -140,10 +140,10 @@ class MainActivity : Activity() {
         }
     }
 
-    private fun launchEmu(f: File, core: String) {
+    private fun launchEmu(f: File, core: String, up: Int = 0) {
         startActivity(
             Intent(this, EmulatorActivity::class.java)
-                .putExtra("path", f.absolutePath).putExtra("core", core)
+                .putExtra("path", f.absolutePath).putExtra("core", core).putExtra("up", up)
         )
     }
 
@@ -222,6 +222,7 @@ class MainActivity : Activity() {
         if (f.isFile) {
             actions.add("HTML로 실행")
             actions.add("에뮬레이터로 실행")
+            actions.add("DOS 실행 (상위 폴더 기준)")
             actions.add("텍스트로 열기")
         }
         AlertDialog.Builder(this).setTitle(f.name)
@@ -233,6 +234,7 @@ class MainActivity : Activity() {
                     "HTML로 실행" ->
                         startActivity(Intent(this, RunnerActivity::class.java).putExtra("path", f.absolutePath))
                     "에뮬레이터로 실행" -> chooseEmulator(f)
+                    "DOS 실행 (상위 폴더 기준)" -> launchEmu(f, "dosbox_pure", 1)
                     "텍스트로 열기" ->
                         startActivity(Intent(this, TextActivity::class.java).putExtra("path", f.absolutePath))
                 }
