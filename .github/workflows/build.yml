@@ -17,7 +17,15 @@ jobs:
           distribution: temurin
           java-version: 17
 
-      - uses: android-actions/setup-android@v3
+      # 러너에 미리 설치된 Android SDK를 사용 (setup-android 액션은 쓰지 않음)
+      - name: Prepare Android SDK
+        run: |
+          export ANDROID_HOME="${ANDROID_HOME:-/usr/local/lib/android/sdk}"
+          SDKM="$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager"
+          yes | "$SDKM" --licenses > /dev/null || true
+          "$SDKM" "platforms;android-34" "build-tools;34.0.0"
+          echo "ANDROID_HOME=$ANDROID_HOME" >> "$GITHUB_ENV"
+          echo "sdk.dir=$ANDROID_HOME" > local.properties
 
       # gradle wrapper 파일 없이도 빌드되도록 Gradle을 직접 설치
       - uses: gradle/actions/setup-gradle@v4
@@ -25,7 +33,7 @@ jobs:
           gradle-version: 8.7
 
       - name: Build debug APK
-        run: gradle assembleDebug --no-daemon
+        run: gradle assembleDebug --no-daemon --stacktrace
 
       - uses: actions/upload-artifact@v4
         with:
