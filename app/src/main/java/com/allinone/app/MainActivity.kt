@@ -51,8 +51,31 @@ class MainActivity : Activity() {
         listView.setOnItemClickListener { _, _, pos, _ -> onClickItem(items[pos]) }
         listView.setOnItemLongClickListener { _, _, pos, _ -> showMenu(items[pos]); true }
 
+        installCrashLogger()
+        showLastCrash()
         requestStorageAccess()
         refresh()
+    }
+
+    /** 앱이 튕기면 오류 내용을 파일에 남기고, 다음 실행 때 화면에 보여준다. */
+    private fun installCrashLogger() {
+        val prev = Thread.getDefaultUncaughtExceptionHandler()
+        Thread.setDefaultUncaughtExceptionHandler { t, e ->
+            try {
+                File(filesDir, "crash.txt").writeText(
+                    "thread: ${t.name}\n" + android.util.Log.getStackTraceString(e))
+            } catch (_: Throwable) {}
+            prev?.uncaughtException(t, e)
+        }
+    }
+
+    private fun showLastCrash() {
+        val f = File(filesDir, "crash.txt")
+        if (!f.exists()) return
+        val text = f.readText().take(3000)
+        f.delete()
+        AlertDialog.Builder(this).setTitle("지난 실행에서 앱이 종료되었습니다")
+            .setMessage(text).setPositiveButton("확인", null).show()
     }
 
     override fun onResume() {
