@@ -33,7 +33,11 @@ jobs:
           gradle-version: 8.7
 
       - name: Build debug APK
-        run: gradle assembleDebug --no-daemon --stacktrace
+        run: gradle assembleDebug --no-daemon --console=plain 2>&1 | tee build.log; test ${PIPESTATUS[0]} -eq 0
+
+      - name: Show compile errors
+        if: failure()
+        run: grep -nE "^e: |What went wrong|error:|Execution failed" -A3 build.log | head -60 || true
 
       - uses: actions/upload-artifact@v4
         with:
