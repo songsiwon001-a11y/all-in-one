@@ -129,6 +129,7 @@ class MainActivity : Activity() {
         when (f.extension.lowercase()) {
             "html", "htm", "xhtml", "svg", "js", "mjs" ->
                 startActivity(Intent(this, RunnerActivity::class.java).putExtra("path", f.absolutePath))
+            "exe", "com", "bat" -> launchDos(f, 0)
             "zip", "7z" -> askArchive(f)
             "txt", "md", "json", "xml", "csv", "log", "kt", "java", "py", "css", "ini", "cfg",
             "yml", "yaml", "gradle", "kts", "sh", "c", "cpp", "h" ->
@@ -138,6 +139,14 @@ class MainActivity : Activity() {
                 if (core != null) launchEmu(f, core) else openWithSystem(f)
             }
         }
+    }
+
+    /** DOS exe: 실행 파일 폴더(up=1이면 상위 폴더)를 통째로 묶어 js-dos로 실행 */
+    private fun launchDos(f: File, up: Int) {
+        startActivity(
+            Intent(this, DosActivity::class.java)
+                .putExtra("path", f.absolutePath).putExtra("up", up)
+        )
     }
 
     private fun launchEmu(f: File, core: String, up: Int = 0) {
@@ -234,7 +243,7 @@ class MainActivity : Activity() {
                     "HTML로 실행" ->
                         startActivity(Intent(this, RunnerActivity::class.java).putExtra("path", f.absolutePath))
                     "에뮬레이터로 실행" -> chooseEmulator(f)
-                    "DOS 실행 (상위 폴더 기준)" -> launchEmu(f, "dosbox_pure", 1)
+                    "DOS 실행 (상위 폴더 기준)" -> launchDos(f, 1)
                     "텍스트로 열기" ->
                         startActivity(Intent(this, TextActivity::class.java).putExtra("path", f.absolutePath))
                 }
