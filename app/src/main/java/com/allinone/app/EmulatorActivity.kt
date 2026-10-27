@@ -52,6 +52,7 @@ class EmulatorActivity : Activity() {
             }
         }
         val served = gameFile
+        val needsThreads = core in THREAD_CORES
 
         web = WebView(this).apply {
             settings.javaScriptEnabled = true
@@ -65,7 +66,16 @@ class EmulatorActivity : Activity() {
                 ): WebResourceResponse? {
                     val url = request.url
                     if (url.host != "allinone.local") return null
-                    val headers = mapOf("Access-Control-Allow-Origin" to "*")
+                    val headers = mutableMapOf(
+                        "Access-Control-Allow-Origin" to "*",
+                        "Cross-Origin-Resource-Policy" to "cross-origin"
+                    )
+                    // 스레드가 필요한 코어는 SharedArrayBuffer를 위해 cross-origin isolation 헤더가 필요하다.
+                    // credentialless: CDN에서 불러오는 스크립트/코어 파일이 막히지 않게 한다.
+                    if (needsThreads) {
+                        headers["Cross-Origin-Opener-Policy"] = "same-origin"
+                        headers["Cross-Origin-Embedder-Policy"] = "credentialless"
+                    }
                     val p = url.path ?: return null
                     return when {
                         p == "/emu.html" -> WebResourceResponse(
@@ -80,7 +90,13 @@ class EmulatorActivity : Activity() {
         setContentView(web)
 
         val name = URLEncoder.encode(target.nameWithoutExtension, "UTF-8")
-        web.loadUrl("https://allinone.local/emu.html?core=$core&game=/game.$gameExt&name=$name")
+        val threads = if (needsThreads) "&threads=1" else ""
+        web.loadUrl("https://allinone.local/emu.html?core=$core&game=/game.$gameExt&name=$name$threads")
+    }
+
+    companion object {
+        /** 스레드(SharedArrayBuffer)가 필요한 EmulatorJS 코어 */
+        val THREAD_CORES = setOf("dosbox_pure", "ppsspp")
     }
 
     /**
