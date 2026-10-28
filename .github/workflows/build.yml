@@ -26,6 +26,25 @@ jobs:
           echo "ANDROID_HOME=$ANDROID_HOME" >> "$GITHUB_ENV"
           echo "sdk.dir=$ANDROID_HOME" > local.properties
 
+      # js-dos(DOS 에뮬레이터)를 npm에서 받아 앱 안에 넣는다. (폰에서 외부 서버가 필요 없어짐)
+      - name: Bundle js-dos into the app
+        shell: bash
+        run: |
+          set -e
+          mkdir -p jsdos_pkg
+          npm install js-dos@8 --prefix jsdos_pkg --no-audit --no-fund
+          DEST=app/src/main/assets/jsdos
+          mkdir -p "$DEST/emulators"
+          cp -r jsdos_pkg/node_modules/js-dos/dist/. "$DEST/"
+          cp -r jsdos_pkg/node_modules/emulators/dist/. "$DEST/emulators/"
+          find "$DEST" -name '*.map' -delete
+          echo "--- js-dos files ---"
+          ls -la "$DEST"
+          echo "--- emulators files ---"
+          ls -la "$DEST/emulators"
+          du -sh "$DEST"
+          test -f "$DEST/js-dos.js"
+
       - uses: gradle/actions/setup-gradle@v4
         with:
           gradle-version: 8.7
