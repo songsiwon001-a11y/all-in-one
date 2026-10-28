@@ -30,6 +30,8 @@ class DosActivity : Activity() {
     private lateinit var bundle: File
     private lateinit var status: TextView
     @Volatile private var destroyed = false
+    // 실행할 때마다 달라지는 번호: js-dos가 주소를 기준으로 게임 파일을 저장해 두고 재사용하는 것을 막는다.
+    private val launchId = System.currentTimeMillis()
 
     @SuppressLint("SetJavaScriptEnabled")
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -37,7 +39,10 @@ class DosActivity : Activity() {
         val target = File(intent.getStringExtra("path") ?: return finish())
         val up = intent.getIntExtra("up", 0)
         title = "DOS · ${target.name}"
-        bundle = File(cacheDir, "run.jsdos")
+        bundle = File(cacheDir, "run_$launchId.jsdos")
+        // 이전 실행에서 남은 번들 정리
+        cacheDir.listFiles { f -> f.name.startsWith("run") && f.name.endsWith(".jsdos") }
+            ?.forEach { it.delete() }
 
         status = TextView(this).apply {
             text = "게임 파일 준비 중…"
@@ -74,6 +79,7 @@ class DosActivity : Activity() {
             settings.javaScriptEnabled = true
             settings.domStorageEnabled = true
             settings.mediaPlaybackRequiresUserGesture = false
+            settings.cacheMode = android.webkit.WebSettings.LOAD_NO_CACHE
             webChromeClient = object : WebChromeClient() {
                 override fun onConsoleMessage(m: ConsoleMessage): Boolean {
                     android.util.Log.d("AllInOneDOS", "${m.message()} (${m.sourceId()}:${m.lineNumber()})")
@@ -114,7 +120,8 @@ class DosActivity : Activity() {
                     if (url.host != "allinone.local") return null
                     val headers = mutableMapOf(
                         "Access-Control-Allow-Origin" to "*",
-                        "Cross-Origin-Resource-Policy" to "cross-origin"
+                        "Cross-Origin-Resource-Policy" to "cross-origin",
+                        "Cache-Control" to "no-store"
                     )
                     val path = url.path ?: return null
                     return try {
@@ -127,7 +134,7 @@ class DosActivity : Activity() {
                                     "text/html", "utf-8", 200, "OK", headers,
                                     DOS_HTML.byteInputStream(Charsets.UTF_8))
                             }
-                            path == "/run.jsdos" -> WebResourceResponse(
+                            path.startsWith("/run-") && path.endsWith(".jsdos") -> WebResourceResponse(
                                 "application/octet-stream", null, 200, "OK", headers, bundle.inputStream())
                             path.startsWith("/jsdos/") -> {
                                 val rel = path.removePrefix("/jsdos/")
@@ -150,7 +157,7 @@ class DosActivity : Activity() {
         }
         web = w
         setContentView(w)
-        w.loadUrl("https://allinone.local/dos.html")
+        w.loadUrl("https://allinone.local/dos.html?b=$launchId")
     }
 
     private fun mimeOf(name: String) = when (name.substringAfterLast('.', "").lowercase()) {
@@ -438,16 +445,19 @@ private val DOS_HTML = """<!doctype html>
       prefix: 'https://v8.js-dos.com/latest/emulators/' }
   ];
 
+  var BUNDLE = '/run-' + ((location.search.match(/[?&]b=(\d+)/) || [0, '0'])[1]) + '.jsdos';
+  log('bundle url: ' + BUNDLE);
+
   function startDos(src) {
     log('js-dos loaded (' + src.name + '). typeof Dos=' + (typeof Dos));
     if (typeof Dos === 'undefined') { log('[fail] Dos is undefined', true); return; }
-    fetch('/run.jsdos').then(function (r) {
+    fetch(BUNDLE).then(function (r) {
       log('bundle http ' + r.status);
       if (r.body) r.body.cancel();
     }).catch(function (e) { log('[fail] bundle fetch: ' + e, true); });
     try {
       Dos(document.getElementById('dos'), {
-        url: '/run.jsdos', autoStart: true, noCloud: true, pathPrefix: src.prefix,
+        url: BUNDLE, autoStart: true, noCloud: true, pathPrefix: src.prefix,
         onEvent: function (event, arg) {
           log('event: ' + event);
           if (event === 'ci-ready') {
