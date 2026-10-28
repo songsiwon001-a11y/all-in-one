@@ -77,10 +77,23 @@ class DosActivity : Activity() {
             webChromeClient = object : WebChromeClient() {
                 override fun onConsoleMessage(m: ConsoleMessage): Boolean {
                     android.util.Log.d("AllInOneDOS", "${m.message()} (${m.sourceId()}:${m.lineNumber()})")
+                    if (m.messageLevel() == ConsoleMessage.MessageLevel.ERROR) report("console: ${m.message()}")
                     return true
                 }
             }
             webViewClient = object : WebViewClient() {
+                override fun onReceivedError(
+                    view: WebView, request: WebResourceRequest, error: android.webkit.WebResourceError
+                ) {
+                    report("${request.url} -> ${error.description} (${error.errorCode})")
+                }
+
+                override fun onReceivedHttpError(
+                    view: WebView, request: WebResourceRequest, resp: WebResourceResponse
+                ) {
+                    report("HTTP ${resp.statusCode}: ${request.url}")
+                }
+
                 // WebView 렌더러가 메모리 부족 등으로 죽어도 앱이 같이 종료되지 않게 한다.
                 override fun onRenderProcessGone(
                     view: WebView, detail: android.webkit.RenderProcessGoneDetail
@@ -100,12 +113,18 @@ class DosActivity : Activity() {
                     val url = request.url
                     if (url.host != "allinone.local") return null
                     val headers = mapOf("Access-Control-Allow-Origin" to "*")
-                    return when (url.path) {
-                        "/dos.html" -> WebResourceResponse(
-                            "text/html", "utf-8", 200, "OK", headers, assets.open("dos.html"))
-                        "/run.jsdos" -> WebResourceResponse(
-                            "application/octet-stream", null, 200, "OK", headers, bundle.inputStream())
-                        else -> null
+                    return try {
+                        when (url.path) {
+                            "/dos.html" -> WebResourceResponse(
+                                "text/html", "utf-8", 200, "OK", headers, DOS_HTML.byteInputStream(Charsets.UTF_8))
+                            "/run.jsdos" -> WebResourceResponse(
+                                "application/octet-stream", null, 200, "OK", headers, bundle.inputStream())
+                            else -> null
+                        }
+                    } catch (e: Throwable) {
+                        // 이 스레드에서 예외가 나면 앱이 종료되므로 오류 응답으로 바꾼다.
+                        WebResourceResponse("text/plain", "utf-8", 500, "Error", headers,
+                            "error: ${e.message}".byteInputStream())
                     }
                 }
             }
@@ -113,6 +132,14 @@ class DosActivity : Activity() {
         web = w
         setContentView(w)
         w.loadUrl("https://allinone.local/dos.html")
+    }
+
+    /** 네이티브 쪽에서 감지한 오류를 페이지의 진단 로그에 표시한다. */
+    private fun report(msg: String) {
+        val w = web ?: return
+        w.post {
+            w.evaluateJavascript("window.__native && window.__native(" + org.json.JSONObject.quote(msg) + ")", null)
+        }
     }
 
     private class BundleInfo(val skipped: Int)
@@ -182,3 +209,71 @@ class DosActivity : Activity() {
         super.onDestroy()
     }
 }
+
+
+/** js-dos 실행 페이지 (assets 파일에 의존하지 않도록 코드에 내장) */
+private val DOS_HTML = """<!doctype html>
+<html>
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no">
+<style>
+  html, body { margin: 0; height: 100%; background: #000; overflow: hidden; }
+  #dos { width: 100%; height: 100%; }
+  #log { position: absolute; left: 0; right: 0; top: 0; z-index: 20; max-height: 50%; overflow: auto;
+         color: #9f9; font: 12px/1.45 monospace; padding: 8px; white-space: pre-wrap;
+         background: rgba(0,0,0,.75); }
+</style>
+</head>
+<body>
+<div id="log">tap to hide
+</div>
+<div id="dos"></div>
+<script>
+  var logEl = document.getElementById('log');
+  var hadError = false;
+  function log(t, isErr) { if (isErr) hadError = true; logEl.textContent += t + '\n'; }
+  logEl.onclick = function () { logEl.style.display = 'none'; };
+  window.__native = function (t) { log('[native] ' + t, true); };
+
+  log('WebAssembly=' + (typeof WebAssembly) + '  SharedArrayBuffer=' + (typeof SharedArrayBuffer) +
+      '  online=' + navigator.onLine);
+
+  window.addEventListener('error', function (e) {
+    var what = e.message || (e.target && (e.target.src || e.target.href)) || '?';
+    log('[error] ' + what, true);
+  }, true);
+  window.addEventListener('unhandledrejection', function (e) {
+    log('[promise] ' + (e.reason && e.reason.message ? e.reason.message : e.reason), true);
+  });
+
+  var BASE = 'https://v8.js-dos.com/latest/';
+  var css = document.createElement('link');
+  css.rel = 'stylesheet'; css.href = BASE + 'js-dos.css';
+  css.onerror = function () { log('[fail] css load: ' + css.href, true); };
+  document.head.appendChild(css);
+
+  var js = document.createElement('script');
+  js.src = BASE + 'js-dos.js';
+  js.onerror = function () { log('[fail] script load: ' + js.src, true); };
+  js.onload = function () {
+    log('script loaded. typeof Dos=' + (typeof Dos));
+    if (typeof Dos === 'undefined') { log('[fail] Dos is undefined', true); return; }
+    fetch('/run.jsdos').then(function (r) {
+      log('bundle http ' + r.status);
+      if (r.body) r.body.cancel();
+    }).catch(function (e) { log('[fail] bundle fetch: ' + e, true); });
+    try {
+      Dos(document.getElementById('dos'), { url: '/run.jsdos', autoStart: true, noCloud: true });
+      log('Dos() called');
+    } catch (err) {
+      log('[fail] Dos() threw: ' + err, true);
+    }
+  };
+  document.head.appendChild(js);
+
+  setTimeout(function () { if (!hadError) logEl.style.display = 'none'; }, 10000);
+</script>
+</body>
+</html>
+"""
