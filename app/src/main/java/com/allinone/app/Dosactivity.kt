@@ -112,15 +112,34 @@ class DosActivity : Activity() {
                 ): WebResourceResponse? {
                     val url = request.url
                     if (url.host != "allinone.local") return null
-                    val headers = mapOf("Access-Control-Allow-Origin" to "*")
+                    val headers = mutableMapOf(
+                        "Access-Control-Allow-Origin" to "*",
+                        "Cross-Origin-Resource-Policy" to "cross-origin"
+                    )
+                    val path = url.path ?: return null
                     return try {
-                        when (url.path) {
-                            "/dos.html" -> WebResourceResponse(
-                                "text/html", "utf-8", 200, "OK", headers, DOS_HTML.byteInputStream(Charsets.UTF_8))
-                            "/run.jsdos" -> WebResourceResponse(
+                        when {
+                            path == "/dos.html" -> {
+                                // SharedArrayBuffer를 쓸 수 있도록 cross-origin isolation 헤더 추가
+                                headers["Cross-Origin-Opener-Policy"] = "same-origin"
+                                headers["Cross-Origin-Embedder-Policy"] = "credentialless"
+                                WebResourceResponse(
+                                    "text/html", "utf-8", 200, "OK", headers,
+                                    DOS_HTML.byteInputStream(Charsets.UTF_8))
+                            }
+                            path == "/run.jsdos" -> WebResourceResponse(
                                 "application/octet-stream", null, 200, "OK", headers, bundle.inputStream())
+                            path.startsWith("/jsdos/") -> {
+                                val rel = path.removePrefix("/jsdos/")
+                                if (rel.contains("..")) null
+                                else WebResourceResponse(
+                                    mimeOf(rel), null, 200, "OK", headers, assets.open("jsdos/$rel"))
+                            }
                             else -> null
                         }
+                    } catch (e: java.io.FileNotFoundException) {
+                        WebResourceResponse("text/plain", "utf-8", 404, "Not Found", headers,
+                            "not found".byteInputStream())
                     } catch (e: Throwable) {
                         // 이 스레드에서 예외가 나면 앱이 종료되므로 오류 응답으로 바꾼다.
                         WebResourceResponse("text/plain", "utf-8", 500, "Error", headers,
@@ -132,6 +151,17 @@ class DosActivity : Activity() {
         web = w
         setContentView(w)
         w.loadUrl("https://allinone.local/dos.html")
+    }
+
+    private fun mimeOf(name: String) = when (name.substringAfterLast('.', "").lowercase()) {
+        "js", "mjs" -> "application/javascript"
+        "css" -> "text/css"
+        "wasm" -> "application/wasm"
+        "json" -> "application/json"
+        "svg" -> "image/svg+xml"
+        "png" -> "image/png"
+        "html" -> "text/html"
+        else -> "application/octet-stream"
     }
 
     /** 네이티브 쪽에서 감지한 오류를 페이지의 진단 로그에 표시한다. */
@@ -237,7 +267,7 @@ private val DOS_HTML = """<!doctype html>
   window.__native = function (t) { log('[native] ' + t, true); };
 
   log('WebAssembly=' + (typeof WebAssembly) + '  SharedArrayBuffer=' + (typeof SharedArrayBuffer) +
-      '  online=' + navigator.onLine);
+      '  isolated=' + window.crossOriginIsolated);
 
   window.addEventListener('error', function (e) {
     var what = e.message || (e.target && (e.target.src || e.target.href)) || '?';
@@ -247,30 +277,44 @@ private val DOS_HTML = """<!doctype html>
     log('[promise] ' + (e.reason && e.reason.message ? e.reason.message : e.reason), true);
   });
 
-  var BASE = 'https://v8.js-dos.com/latest/';
-  var css = document.createElement('link');
-  css.rel = 'stylesheet'; css.href = BASE + 'js-dos.css';
-  css.onerror = function () { log('[fail] css load: ' + css.href, true); };
-  document.head.appendChild(css);
+  // 1순위: 앱에 내장된 js-dos, 2순위: 인터넷(CDN)
+  var SOURCES = [
+    { name: 'built-in', js: '/jsdos/js-dos.js', css: '/jsdos/js-dos.css', prefix: '/jsdos/emulators/' },
+    { name: 'cdn', js: 'https://v8.js-dos.com/latest/js-dos.js', css: 'https://v8.js-dos.com/latest/js-dos.css',
+      prefix: 'https://v8.js-dos.com/latest/emulators/' }
+  ];
 
-  var js = document.createElement('script');
-  js.src = BASE + 'js-dos.js';
-  js.onerror = function () { log('[fail] script load: ' + js.src, true); };
-  js.onload = function () {
-    log('script loaded. typeof Dos=' + (typeof Dos));
+  function startDos(src) {
+    log('js-dos loaded (' + src.name + '). typeof Dos=' + (typeof Dos));
     if (typeof Dos === 'undefined') { log('[fail] Dos is undefined', true); return; }
     fetch('/run.jsdos').then(function (r) {
       log('bundle http ' + r.status);
       if (r.body) r.body.cancel();
     }).catch(function (e) { log('[fail] bundle fetch: ' + e, true); });
     try {
-      Dos(document.getElementById('dos'), { url: '/run.jsdos', autoStart: true, noCloud: true });
+      Dos(document.getElementById('dos'), {
+        url: '/run.jsdos', autoStart: true, noCloud: true, pathPrefix: src.prefix
+      });
       log('Dos() called');
     } catch (err) {
       log('[fail] Dos() threw: ' + err, true);
     }
-  };
-  document.head.appendChild(js);
+  }
+
+  function tryLoad(i) {
+    if (i >= SOURCES.length) { log('[fail] js-dos could not be loaded from any source', true); return; }
+    var src = SOURCES[i];
+    log('loading js-dos from ' + src.name + ' ...');
+    var css = document.createElement('link');
+    css.rel = 'stylesheet'; css.href = src.css;
+    document.head.appendChild(css);
+    var js = document.createElement('script');
+    js.src = src.js;
+    js.onload = function () { startDos(src); };
+    js.onerror = function () { log('[fail] ' + src.name + ': ' + src.js, true); tryLoad(i + 1); };
+    document.head.appendChild(js);
+  }
+  tryLoad(0);
 
   setTimeout(function () { if (!hadError) logEl.style.display = 'none'; }, 10000);
 </script>
