@@ -299,6 +299,7 @@ private val DOS_HTML = """<!doctype html>
 </div>
 
 <script>
+(function () {
   var logEl = document.getElementById('log');
   var hadError = false;
   function log(t, isErr) { if (isErr) hadError = true; logEl.textContent += t + '\n'; }
@@ -332,6 +333,7 @@ private val DOS_HTML = """<!doctype html>
     down:  { glfw: 264, key: 'ArrowDown',  code: 'ArrowDown',   kc: 40 }
   };
   var ci = null;
+  var ciReady = false;
   var held = {};
 
   function domKey(type, k) {
@@ -447,8 +449,9 @@ private val DOS_HTML = """<!doctype html>
       Dos(document.getElementById('dos'), {
         url: '/run.jsdos', autoStart: true, noCloud: true, pathPrefix: src.prefix,
         onEvent: function (event, arg) {
+          log('event: ' + event);
           if (event === 'ci-ready') {
-            ci = arg;
+            ci = arg; ciReady = true;
             log('ci-ready. sendKeyEvent=' + (ci && typeof ci.sendKeyEvent));
           }
         }
@@ -474,7 +477,12 @@ private val DOS_HTML = """<!doctype html>
   }
   tryLoad(0);
 
-  setTimeout(function () { if (!hadError) logEl.style.display = 'none'; }, 10000);
+  // 12초가 지나도 게임이 시작되지 않으면 멈춘 것이므로 로그를 계속 보여준다.
+  setTimeout(function () {
+    if (!ciReady) log('[wait] 12s passed but the game has not started (no ci-ready)', true);
+  }, 12000);
+  setTimeout(function () { if (!hadError && ciReady) logEl.style.display = 'none'; }, 10000);
+})();
 </script>
 </body>
 </html>
