@@ -248,17 +248,56 @@ private val DOS_HTML = """<!doctype html>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no">
 <style>
-  html, body { margin: 0; height: 100%; background: #000; overflow: hidden; }
+  html, body { margin: 0; height: 100%; background: #000; overflow: hidden;
+               -webkit-user-select: none; user-select: none; -webkit-touch-callout: none; }
   #dos { width: 100%; height: 100%; }
   #log { position: absolute; left: 0; right: 0; top: 0; z-index: 20; max-height: 50%; overflow: auto;
          color: #9f9; font: 12px/1.45 monospace; padding: 8px; white-space: pre-wrap;
          background: rgba(0,0,0,.75); }
+
+  /* ---- on-screen controls (화면 폭에 맞춰 크기 조절) ---- */
+  :root { --b: min(13vw, 60px); }
+  #pad { position: absolute; left: 0; right: 0; top: 0; bottom: 0; z-index: 10; pointer-events: none; }
+  #pad.hidden .ctl { display: none; }
+  .ctl { pointer-events: auto; touch-action: none; position: absolute; }
+  #stick { left: 10px; bottom: 14px; width: calc(var(--b) * 2.4); height: calc(var(--b) * 2.4);
+           border-radius: 50%; background: rgba(255,255,255,.10); border: 2px solid rgba(255,255,255,.35); }
+  #knob { position: absolute; left: 50%; top: 50%; width: var(--b); height: var(--b);
+          margin: calc(var(--b) * -0.5) 0 0 calc(var(--b) * -0.5);
+          border-radius: 50%; background: rgba(255,255,255,.35); border: 2px solid rgba(255,255,255,.7);
+          pointer-events: none; box-sizing: border-box; }
+  #btns { right: 8px; bottom: 14px; display: grid; grid-template-columns: repeat(4, var(--b));
+          gap: calc(var(--b) * 0.12); }
+  .btn { width: var(--b); height: var(--b); border-radius: 50%; box-sizing: border-box;
+         background: rgba(255,255,255,.14); border: 2px solid rgba(255,255,255,.45);
+         color: #fff; font: bold calc(var(--b) * 0.26) / calc(var(--b) - 4px) sans-serif; text-align: center; }
+  .btn.on { background: rgba(80,160,255,.6); }
+  .spacer { width: var(--b); height: var(--b); }
+  #toggle { pointer-events: auto; position: absolute; right: 10px; top: 10px; width: 42px; height: 42px;
+            border-radius: 50%; background: rgba(255,255,255,.18); border: 2px solid rgba(255,255,255,.5);
+            color: #fff; font: 20px/38px sans-serif; text-align: center; touch-action: manipulation; }
 </style>
 </head>
 <body>
 <div id="log">tap to hide
 </div>
 <div id="dos"></div>
+
+<div id="pad">
+  <div id="toggle">&#127918;</div>
+  <div id="stick" class="ctl"><div id="knob"></div></div>
+  <div id="btns" class="ctl">
+    <div class="btn" data-key="ctrl">Ctrl</div>
+    <div class="btn" data-key="enter">Enter</div>
+    <div class="btn" data-key="esc">Esc</div>
+    <div class="spacer"></div>
+    <div class="btn" data-key="a">A</div>
+    <div class="btn" data-key="s">S</div>
+    <div class="btn" data-key="d">D</div>
+    <div class="btn" data-key="space">Space</div>
+  </div>
+</div>
+
 <script>
   var logEl = document.getElementById('log');
   var hadError = false;
@@ -277,6 +316,119 @@ private val DOS_HTML = """<!doctype html>
     log('[promise] ' + (e.reason && e.reason.message ? e.reason.message : e.reason), true);
   });
 
+  // ================= 키 입력 =================
+  // js-dos CommandInterface(ci)가 쓰는 키 코드(GLFW 방식) + 예비용 브라우저 키 정보
+  var KEYS = {
+    ctrl:  { glfw: 341, key: 'Control',    code: 'ControlLeft', kc: 17 },
+    enter: { glfw: 257, key: 'Enter',      code: 'Enter',       kc: 13 },
+    esc:   { glfw: 256, key: 'Escape',     code: 'Escape',      kc: 27 },
+    space: { glfw: 32,  key: ' ',          code: 'Space',       kc: 32 },
+    a:     { glfw: 65,  key: 'a',          code: 'KeyA',        kc: 65 },
+    s:     { glfw: 83,  key: 's',          code: 'KeyS',        kc: 83 },
+    d:     { glfw: 68,  key: 'd',          code: 'KeyD',        kc: 68 },
+    left:  { glfw: 263, key: 'ArrowLeft',  code: 'ArrowLeft',   kc: 37 },
+    up:    { glfw: 265, key: 'ArrowUp',    code: 'ArrowUp',     kc: 38 },
+    right: { glfw: 262, key: 'ArrowRight', code: 'ArrowRight',  kc: 39 },
+    down:  { glfw: 264, key: 'ArrowDown',  code: 'ArrowDown',   kc: 40 }
+  };
+  var ci = null;
+  var held = {};
+
+  function domKey(type, k) {
+    var ev = new KeyboardEvent(type, { key: k.key, code: k.code, keyCode: k.kc, which: k.kc,
+                                       bubbles: true, cancelable: true });
+    try { Object.defineProperty(ev, 'keyCode', { get: function () { return k.kc; } }); } catch (e) {}
+    try { Object.defineProperty(ev, 'which', { get: function () { return k.kc; } }); } catch (e) {}
+    (document.activeElement || document.body).dispatchEvent(ev);
+  }
+
+  function setKey(name, down) {
+    if (!!held[name] === down) return;
+    held[name] = down;
+    var k = KEYS[name];
+    if (ci && typeof ci.sendKeyEvent === 'function') {
+      try { ci.sendKeyEvent(k.glfw, down); return; } catch (e) { log('[key] ci error: ' + e, true); }
+    }
+    domKey(down ? 'keydown' : 'keyup', k);
+  }
+
+  function releaseAll() { for (var n in held) { if (held[n]) setKey(n, false); } }
+  window.addEventListener('blur', releaseAll);
+  document.addEventListener('visibilitychange', function () { if (document.hidden) releaseAll(); });
+
+  // ---- 버튼 (멀티터치 지원) ----
+  var btns = document.querySelectorAll('.btn');
+  for (var bi = 0; bi < btns.length; bi++) {
+    (function (el) {
+      var name = el.getAttribute('data-key');
+      el.addEventListener('pointerdown', function (e) {
+        e.preventDefault();
+        try { el.setPointerCapture(e.pointerId); } catch (x) {}
+        el.classList.add('on'); setKey(name, true);
+      });
+      var up = function (e) { e.preventDefault(); el.classList.remove('on'); setKey(name, false); };
+      el.addEventListener('pointerup', up);
+      el.addEventListener('pointercancel', up);
+      el.addEventListener('contextmenu', function (e) { e.preventDefault(); });
+    })(btns[bi]);
+  }
+
+  // ---- 조이스틱 -> 방향키 ----
+  var stick = document.getElementById('stick');
+  var knob = document.getElementById('knob');
+  var stickId = null;
+  function stickMove(e) {
+    var r = stick.getBoundingClientRect();
+    var cx = r.left + r.width / 2, cy = r.top + r.height / 2;
+    var dx = e.clientX - cx, dy = e.clientY - cy;
+    var R = r.width / 2, mag = Math.sqrt(dx * dx + dy * dy);
+    var kx = dx, ky = dy;
+    if (mag > R) { kx = dx * R / mag; ky = dy * R / mag; }
+    knob.style.transform = 'translate(' + kx + 'px,' + ky + 'px)';
+    var dz = R * 0.30, ax = Math.abs(dx), ay = Math.abs(dy);
+    var horiz = ax > dz && ax > 0.5 * ay;
+    var vert = ay > dz && ay > 0.5 * ax;
+    setKey('left',  horiz && dx < 0);
+    setKey('right', horiz && dx > 0);
+    setKey('up',    vert && dy < 0);
+    setKey('down',  vert && dy > 0);
+  }
+  function stickEnd() {
+    stickId = null;
+    knob.style.transform = 'translate(0,0)';
+    setKey('left', false); setKey('right', false); setKey('up', false); setKey('down', false);
+  }
+  stick.addEventListener('pointerdown', function (e) {
+    e.preventDefault();
+    stickId = e.pointerId;
+    try { stick.setPointerCapture(e.pointerId); } catch (x) {}
+    stickMove(e);
+  });
+  stick.addEventListener('pointermove', function (e) { if (e.pointerId === stickId) { e.preventDefault(); stickMove(e); } });
+  stick.addEventListener('pointerup', function (e) { if (e.pointerId === stickId) stickEnd(); });
+  stick.addEventListener('pointercancel', function (e) { if (e.pointerId === stickId) stickEnd(); });
+
+  // ---- 컨트롤 숨기기/보이기 ----
+  document.getElementById('toggle').addEventListener('click', function () {
+    var pad = document.getElementById('pad');
+    pad.classList.toggle('hidden');
+    if (pad.classList.contains('hidden')) { releaseAll(); stickEnd(); }
+  });
+
+  // ---- 키보드: I J K L 을 방향키로 ----
+  var IJKL = { KeyI: 'up', KeyJ: 'left', KeyK: 'down', KeyL: 'right' };
+  function ijkl(e) {
+    var name = IJKL[e.code];
+    if (!name) return;
+    e.preventDefault();
+    e.stopImmediatePropagation();
+    if (e.repeat) return;
+    setKey(name, e.type === 'keydown');
+  }
+  window.addEventListener('keydown', ijkl, true);
+  window.addEventListener('keyup', ijkl, true);
+
+  // ================= js-dos 불러오기 =================
   // 1순위: 앱에 내장된 js-dos, 2순위: 인터넷(CDN)
   var SOURCES = [
     { name: 'built-in', js: '/jsdos/js-dos.js', css: '/jsdos/js-dos.css', prefix: '/jsdos/emulators/' },
@@ -293,7 +445,13 @@ private val DOS_HTML = """<!doctype html>
     }).catch(function (e) { log('[fail] bundle fetch: ' + e, true); });
     try {
       Dos(document.getElementById('dos'), {
-        url: '/run.jsdos', autoStart: true, noCloud: true, pathPrefix: src.prefix
+        url: '/run.jsdos', autoStart: true, noCloud: true, pathPrefix: src.prefix,
+        onEvent: function (event, arg) {
+          if (event === 'ci-ready') {
+            ci = arg;
+            log('ci-ready. sendKeyEvent=' + (ci && typeof ci.sendKeyEvent));
+          }
+        }
       });
       log('Dos() called');
     } catch (err) {
